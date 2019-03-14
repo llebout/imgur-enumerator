@@ -1,6 +1,11 @@
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
 use std::iter;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
+use std::thread;
+use std::time::Duration;
 
 const BASE_URL: &str = "https://i.imgur.com/";
 
@@ -33,16 +38,30 @@ fn main() {
 
     let args: Vec<String> = std::env::args().collect();
 
+    let images_per_second = Arc::new(AtomicUsize::new(0));
+
+    {
+        let images_per_second = images_per_second.clone();
+
+        pool.execute(move || loop {
+            println!("{} images / s", images_per_second.load(Ordering::SeqCst));
+            images_per_second.store(10, Ordering::SeqCst);
+            thread::sleep(Duration::from_secs(1));
+        });
+    }
+
     for _ in 0..args.get(1).unwrap().parse().expect("valid thread count") {
         let client = client.clone();
         let args = args.clone();
+        let images_per_second = images_per_second.clone();
 
         pool.execute(move || loop {
             let (link, _path) = generate_link();
 
             // println!("fetching {}", link);
-            match client.get(&link).send() {
+            match client.head(&link).send() {
                 Ok(resp) => {
+                    images_per_second.fetch_add(1, Ordering::SeqCst);
                     // println!("received headers for {}", link);
                     match resp.content_length() {
                         Some(len) => {
