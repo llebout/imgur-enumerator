@@ -1,0 +1,12 @@
+[package]
+name = "imgur"
+version = "0.1.0"
+authors = ["lle-bout"]
+edition = "2018"
+
+[dependencies]
+rand = "0.6"
+reqwest = "0.9"
+lazy_static = "1"
+threadpool = "1"
+serenity = "0.5"
