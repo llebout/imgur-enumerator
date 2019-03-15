@@ -6,7 +6,8 @@ edition = "2018"
 
 [dependencies]
 rand = "0.6"
-reqwest = "0.9"
-lazy_static = "1"
-threadpool = "1"
+hyper = "0.12"
+futures = "0.1"
+tokio = "0.1"
 serenity = "0.5"
+hyper-tls = "0.3"
