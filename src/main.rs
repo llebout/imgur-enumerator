@@ -65,7 +65,8 @@ fn main() {
 
         for uri in rx {
             let uri_str = format!(
-                "{}{}",
+                "{}{}{}",
+                uri.scheme_str().unwrap(),
                 uri.authority_part().unwrap(),
                 uri.path_and_query().unwrap()
             );
