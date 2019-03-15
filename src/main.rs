@@ -3,6 +3,8 @@ use hyper::{Body, Client, Request, Uri};
 use hyper_tls::HttpsConnector;
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
+use std::fs::OpenOptions;
+use std::io::prelude::*;
 use std::iter;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
@@ -51,9 +53,10 @@ impl Iterator for UriGenerator {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
-    let n_concurrent: usize = args.get(1).unwrap().parse().unwrap();
+    let mut n_concurrent: usize = args.get(1).unwrap().parse().unwrap();
     let id: u64 = args.get(2).unwrap().parse().unwrap();
     let token: String = args.get(3).unwrap().parse().unwrap();
+    let save: String = args.get(4).unwrap().parse().unwrap();
 
     let (tx, rx) = mpsc::channel::<Uri>();
 
@@ -62,6 +65,12 @@ fn main() {
         use serenity::model::channel::Embed;
 
         let webhook = http::get_webhook_with_token(id, &token).expect("valid webhook");
+
+        let mut file = OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(save)
+            .unwrap();
 
         for uri in rx {
             let uri_str = format!(
@@ -73,8 +82,9 @@ fn main() {
 
             println!("found valid image at {}", uri_str);
 
-            let resources = Embed::fake(|e| e.image(uri_str));
+            file.write_all(format!("{}\n", uri_str).as_bytes()).unwrap();
 
+            let resources = Embed::fake(|e| e.image(uri_str));
             let _ = webhook.execute(false, |w| w.embeds(vec![resources]));
         }
     });
@@ -90,36 +100,43 @@ fn main() {
         });
     }
 
-    let https = HttpsConnector::new(4).expect("TLS initialization failed");
-    let client = Client::builder().build::<_, hyper::Body>(https);
+    loop {
+        let images_per_second = images_per_second.clone();
+        let tx = tx.clone();
 
-    let images = UriGenerator::new(BASE_URL.to_string(), ".png".to_string());
+        let https = HttpsConnector::new(4).expect("TLS initialization failed");
+        let client = Client::builder().build::<_, hyper::Body>(https);
 
-    let work = stream::iter_ok(images)
-        .map(move |uri| {
-            client
-                .request(Request::head(uri.clone()).body(Body::empty()).unwrap())
-                .map(move |res| (res, uri))
-        })
-        .buffer_unordered(n_concurrent)
-        .and_then(move |(res, uri)| {
-            images_per_second.fetch_add(1, Ordering::SeqCst);
+        let images = UriGenerator::new(BASE_URL.to_string(), ".png".to_string());
 
-            if let Some(content_length) = res.headers().get("content-length") {
-                if let Ok(content_length) = content_length.to_str() {
-                    if let Ok(content_length) = content_length.parse::<usize>() {
-                        if content_length > 503 {
-                            tx.send(uri).unwrap();
+        let work = stream::iter_ok(images)
+            .map(move |uri| {
+                client
+                    .request(Request::head(uri.clone()).body(Body::empty()).unwrap())
+                    .map(move |res| (res, uri))
+            })
+            .buffer_unordered(n_concurrent)
+            .and_then(move |(res, uri)| {
+                images_per_second.fetch_add(1, Ordering::SeqCst);
+
+                if let Some(content_length) = res.headers().get("content-length") {
+                    if let Ok(content_length) = content_length.to_str() {
+                        if let Ok(content_length) = content_length.parse::<usize>() {
+                            if content_length > 503 {
+                                tx.send(uri).unwrap();
+                            }
                         }
                     }
                 }
-            }
-            res.into_body().concat2()
-        })
-        .for_each(|_body| Ok(()))
-        .map_err(|e| {
-            eprintln!("{}", e);
-        });
+                res.into_body().concat2()
+            })
+            .for_each(|_body| Ok(()))
+            .map_err(|e| {
+                eprintln!("{}", e);
+            });
 
-    tokio::run(work);
+        tokio::run(work);
+
+        n_concurrent -= 1;
+    }
 }
