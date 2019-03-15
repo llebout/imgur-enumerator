@@ -33,10 +33,18 @@ fn send_to_discord_webhook(id: u64, token: &String, image_url: &String) {
 }
 
 fn main() {
-    let pool = threadpool::ThreadPool::new(50);
-    let client = reqwest::Client::builder().gzip(true).build().unwrap();
-
     let args: Vec<String> = std::env::args().collect();
+
+    let n_threads = args.get(1).unwrap().parse().expect("valid thread count");
+    let webhook_id = args
+        .get(2)
+        .unwrap()
+        .parse::<u64>()
+        .expect("valid webhook id");
+    let webhook_token = args.get(3).unwrap();
+
+    let pool = threadpool::ThreadPool::new(n_threads);
+    let client = reqwest::Client::builder().gzip(true).build().unwrap();
 
     let images_per_second = Arc::new(AtomicUsize::new(0));
 
@@ -50,10 +58,12 @@ fn main() {
         });
     }
 
-    for _ in 0..args.get(1).unwrap().parse().expect("valid thread count") {
+    // + 1 for statistics thread
+    for _ in 0..n_threads + 1 {
         let client = client.clone();
-        let args = args.clone();
         let images_per_second = images_per_second.clone();
+        let webhook_id = webhook_id.clone();
+        let webhook_token = webhook_token.clone();
 
         pool.execute(move || loop {
             let (link, _path) = generate_link();
@@ -79,11 +89,7 @@ fn main() {
 
                                 println!("found valid image at {}", &link);
 
-                                send_to_discord_webhook(
-                                    args.get(2).unwrap().parse().expect("valid webhook id"),
-                                    args.get(3).unwrap(),
-                                    &link,
-                                );
+                                send_to_discord_webhook(webhook_id, &webhook_token, &link);
                             }
                         }
                         None => {
