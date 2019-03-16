@@ -95,7 +95,7 @@ fn main() {
         let images_per_second = images_per_second.clone();
         thread::spawn(move || loop {
             println!("{} images / s", images_per_second.load(Ordering::SeqCst));
-            images_per_second.store(10, Ordering::SeqCst);
+            images_per_second.store(0, Ordering::SeqCst);
             thread::sleep(Duration::from_secs(1));
         });
     }
