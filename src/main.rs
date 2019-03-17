@@ -1,3 +1,4 @@
+use clap::{App, Arg};
 use futures::{stream, Future, Stream};
 use hyper::{Body, Client, Request, StatusCode, Uri};
 use hyper_tls::HttpsConnector;
@@ -75,25 +76,77 @@ fn stream_to_file(path: String, rx: mpsc::Receiver<String>) {
     }
 }
 
+fn print_statistics(
+    found_per_minute: Arc<AtomicUsize>,
+    request_per_second: Arc<AtomicUsize>,
+    total_requests: Arc<AtomicUsize>,
+    total_found: Arc<AtomicUsize>,
+) {
+    let mut elapsed_seconds = 0;
+    let mut elapsed_milliseconds = 0;
+
+    let mut cached_found_per_seconds = 0;
+    let mut cached_found_per_minute = 0;
+    loop {
+        print!(
+            "{} req / sec - {} found / min - uptime {}s - total reqs {} - total found {}\r",
+            cached_found_per_seconds,
+            cached_found_per_minute,
+            elapsed_seconds,
+            total_requests.load(Ordering::SeqCst),
+            total_found.load(Ordering::SeqCst)
+        );
+
+        std::io::stdout().flush().unwrap();
+
+        if elapsed_milliseconds % 1000 == 0 {
+            elapsed_seconds += 1;
+
+            if elapsed_seconds % 60 == 0 {
+                cached_found_per_minute = found_per_minute.load(Ordering::SeqCst);
+                found_per_minute.store(0, Ordering::SeqCst);
+            }
+
+            cached_found_per_seconds = request_per_second.load(Ordering::SeqCst);
+            request_per_second.store(0, Ordering::SeqCst);
+        }
+
+        thread::sleep(Duration::from_millis(50));
+        elapsed_milliseconds += 50;
+    }
+}
+
 fn main() {
-    let matches = clap::App::new("imgur-enumerator")
+    let matches = App::new("imgur-enumerator")
         .version("0.1")
         .arg(
-            clap::Arg::with_name("concurrent")
-                .default_value("4")
+            Arg::with_name("concurrent")
                 .long("concurrent")
-                .short("c"),
+                .short("c")
+                .takes_value(true)
+                .default_value("4")
+                .help("Maximum amount of concurrent requests at a time"),
         )
-        .arg(clap::Arg::with_name("webhook_id").long("id").short("i"))
         .arg(
-            clap::Arg::with_name("webhook_token")
+            Arg::with_name("webhook_id")
+                .long("id")
+                .short("i")
+                .takes_value(true)
+                .help("Discord Webhook ID"),
+        )
+        .arg(
+            Arg::with_name("webhook_token")
                 .long("token")
-                .short("t"),
+                .short("t")
+                .takes_value(true)
+                .help("Discord Webhook Token"),
         )
         .arg(
-            clap::Arg::with_name("export_file")
+            Arg::with_name("export_file")
                 .long("export")
-                .short("e"),
+                .short("e")
+                .takes_value(true)
+                .help("File where found links will be written"),
         )
         .get_matches();
 
@@ -129,38 +182,12 @@ fn main() {
         let total_found = total_found.clone();
 
         thread::spawn(move || {
-            let mut elapsed_seconds = 0;
-            let mut elapsed_milliseconds = 0;
-
-            let mut cached_found_per_seconds = 0;
-            let mut cached_found_per_minute = 0;
-            loop {
-                print!(
-                    "{} req / sec - {} found / min - uptime {}s - total reqs {} - total found {}\r",
-                    cached_found_per_seconds,
-                    cached_found_per_minute,
-                    elapsed_seconds,
-                    total_requests.load(Ordering::SeqCst),
-                    total_found.load(Ordering::SeqCst)
-                );
-
-                std::io::stdout().flush().unwrap();
-
-                if elapsed_milliseconds % 1000 == 0 {
-                    elapsed_seconds += 1;
-
-                    if elapsed_seconds % 60 == 0 {
-                        cached_found_per_minute = found_per_minute.load(Ordering::SeqCst);
-                        found_per_minute.store(0, Ordering::SeqCst);
-                    }
-
-                    cached_found_per_seconds = request_per_second.load(Ordering::SeqCst);
-                    request_per_second.store(0, Ordering::SeqCst);
-                }
-
-                thread::sleep(Duration::from_millis(50));
-                elapsed_milliseconds += 50;
-            }
+            print_statistics(
+                found_per_minute,
+                request_per_second,
+                total_requests,
+                total_found,
+            )
         });
     }
 
