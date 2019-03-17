@@ -1,5 +1,5 @@
 use futures::{stream, Future, Stream};
-use hyper::{Body, Client, Request, Uri};
+use hyper::{Body, Client, Request, StatusCode, Uri};
 use hyper_tls::HttpsConnector;
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
@@ -50,59 +50,131 @@ impl Iterator for UriGenerator {
     }
 }
 
-fn main() {
-    let args: Vec<String> = std::env::args().collect();
+fn stream_to_webhook(id: u64, token: String, rx: mpsc::Receiver<String>) {
+    use serenity::http;
+    use serenity::model::channel::Embed;
 
-    let mut n_concurrent: usize = args.get(1).unwrap().parse().unwrap();
-    let id: u64 = args.get(2).unwrap().parse().unwrap();
-    let token: String = args.get(3).unwrap().parse().unwrap();
-    let save: String = args.get(4).unwrap().parse().unwrap();
+    let webhook = http::get_webhook_with_token(id, &token).expect("valid webhook");
 
-    let (tx, rx) = mpsc::channel::<Uri>();
+    for image_url in rx {
+        let resources = Embed::fake(|e| e.image(image_url));
+        let _ = webhook.execute(false, |w| w.embeds(vec![resources]));
+    }
+}
 
-    thread::spawn(move || {
-        use serenity::http;
-        use serenity::model::channel::Embed;
+fn stream_to_file(path: String, rx: mpsc::Receiver<String>) {
+    let mut file = OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(path)
+        .unwrap();
 
-        let webhook = http::get_webhook_with_token(id, &token).expect("valid webhook");
-
-        let mut file = OpenOptions::new()
-            .append(true)
-            .create(true)
-            .open(save)
+    for image_url in rx {
+        file.write_all(format!("{}\n", image_url).as_bytes())
             .unwrap();
+    }
+}
 
-        for uri in rx {
-            let uri_str = format!(
-                "{}://{}{}",
-                uri.scheme_str().unwrap(),
-                uri.authority_part().unwrap(),
-                uri.path_and_query().unwrap()
-            );
+fn main() {
+    let matches = clap::App::new("imgur-enumerator")
+        .version("0.1")
+        .arg(
+            clap::Arg::with_name("concurrent")
+                .default_value("4")
+                .long("concurrent")
+                .short("c"),
+        )
+        .arg(clap::Arg::with_name("webhook_id").long("id").short("i"))
+        .arg(
+            clap::Arg::with_name("webhook_token")
+                .long("token")
+                .short("t"),
+        )
+        .arg(
+            clap::Arg::with_name("export_file")
+                .long("export")
+                .short("e"),
+        )
+        .get_matches();
 
-            println!("found valid image at {}", uri_str);
+    let n_concurrent = matches.value_of("concurrent").unwrap().parse().unwrap();
 
-            file.write_all(format!("{}\n", uri_str).as_bytes()).unwrap();
+    let (tx, rx) = mpsc::channel::<String>();
+    let (tx_hook, rx_hook) = mpsc::channel::<String>();
 
-            let resources = Embed::fake(|e| e.image(uri_str));
-            let _ = webhook.execute(false, |w| w.embeds(vec![resources]));
-        }
-    });
+    if matches.is_present("webhook_id") && matches.is_present("webhook_token") {
+        let id = matches.value_of("webhook_id").unwrap().parse().unwrap();
+        let token: String = matches.value_of("webhook_token").unwrap().to_string();
 
-    let images_per_second = Arc::new(AtomicUsize::new(0));
+        thread::spawn(move || stream_to_webhook(id, token, rx_hook));
+    }
+
+    if matches.is_present("export_file") {
+        let export_path: String = matches.value_of("export_file").unwrap().to_string();
+
+        thread::spawn(move || stream_to_file(export_path, rx));
+    }
+
+    let request_per_second = Arc::new(AtomicUsize::new(0));
+    let found_per_minute = Arc::new(AtomicUsize::new(0));
+
+    let total_requests = Arc::new(AtomicUsize::new(0));
+    let total_found = Arc::new(AtomicUsize::new(0));
 
     {
-        let images_per_second = images_per_second.clone();
-        thread::spawn(move || loop {
-            println!("{} images / s", images_per_second.load(Ordering::SeqCst));
-            images_per_second.store(0, Ordering::SeqCst);
-            thread::sleep(Duration::from_secs(1));
+        let found_per_minute = found_per_minute.clone();
+        let request_per_second = request_per_second.clone();
+
+        let total_requests = total_requests.clone();
+        let total_found = total_found.clone();
+
+        thread::spawn(move || {
+            let mut elapsed_seconds = 0;
+            let mut elapsed_milliseconds = 0;
+
+            let mut cached_found_per_seconds = 0;
+            let mut cached_found_per_minute = 0;
+            loop {
+                print!(
+                    "{} req / sec - {} found / min - uptime {}s - total reqs {} - total found {}\r",
+                    cached_found_per_seconds,
+                    cached_found_per_minute,
+                    elapsed_seconds,
+                    total_requests.load(Ordering::SeqCst),
+                    total_found.load(Ordering::SeqCst)
+                );
+
+                std::io::stdout().flush().unwrap();
+
+                if elapsed_milliseconds % 1000 == 0 {
+                    elapsed_seconds += 1;
+
+                    if elapsed_seconds % 60 == 0 {
+                        cached_found_per_minute = found_per_minute.load(Ordering::SeqCst);
+                        found_per_minute.store(0, Ordering::SeqCst);
+                    }
+
+                    cached_found_per_seconds = request_per_second.load(Ordering::SeqCst);
+                    request_per_second.store(0, Ordering::SeqCst);
+                }
+
+                thread::sleep(Duration::from_millis(50));
+                elapsed_milliseconds += 50;
+            }
         });
     }
 
+    println!("Starting with {} concurrent requests.", n_concurrent);
+
     loop {
-        let images_per_second = images_per_second.clone();
+        let request_per_second = request_per_second.clone();
+        let found_per_minute = found_per_minute.clone();
+
+        let total_requests = total_requests.clone();
+        let total_found = total_found.clone();
+
         let tx = tx.clone();
+        let tx_hook = tx_hook.clone();
 
         let https = HttpsConnector::new(4).expect("TLS initialization failed");
         let client = Client::builder().build::<_, hyper::Body>(https);
@@ -117,16 +189,24 @@ fn main() {
             })
             .buffer_unordered(n_concurrent)
             .and_then(move |(res, uri)| {
-                images_per_second.fetch_add(1, Ordering::SeqCst);
+                request_per_second.fetch_add(1, Ordering::SeqCst);
+                total_requests.fetch_add(1, Ordering::SeqCst);
 
-                if let Some(content_length) = res.headers().get("content-length") {
-                    if let Ok(content_length) = content_length.to_str() {
-                        if let Ok(content_length) = content_length.parse::<usize>() {
-                            if content_length > 503 {
-                                tx.send(uri).unwrap();
-                            }
-                        }
-                    }
+                if res.status() == StatusCode::OK {
+                    found_per_minute.fetch_add(1, Ordering::SeqCst);
+                    total_found.fetch_add(1, Ordering::SeqCst);
+
+                    let image_url = format!(
+                        "{}://{}{}",
+                        uri.scheme_str().unwrap(),
+                        uri.authority_part().unwrap(),
+                        uri.path_and_query().unwrap()
+                    );
+
+                    println!("{}found valid image at {}", "\x1B[K", image_url);
+
+                    tx.send(image_url.clone()).is_err();
+                    tx_hook.send(image_url.clone()).is_err();
                 }
                 res.into_body().concat2()
             })
@@ -136,7 +216,5 @@ fn main() {
             });
 
         tokio::run(work);
-
-        n_concurrent -= 1;
     }
 }
