@@ -9,9 +9,9 @@ imgur-enumerator has very high performance.
 With 800 concurrent requests, it consumed 7Mbps UP and 31Mbps DOWN,
 checking ~7000 image links per second and finding between 3 and 7 valid image links per second.
 
-# Example
+# Demo
 
-![Example](example.gif)
+![Demo](demo.gif)
 
 # Compiling
 
