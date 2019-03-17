@@ -9,6 +9,10 @@ imgur-enumerator has very high performance.
 With 800 concurrent requests, it consumed 7Mbps UP and 31Mbps DOWN,
 checking ~7000 image links per second and finding between 3 and 7 valid image links per second.
 
+# Example
+
+![Example](example.gif)
+
 # Compiling
 
 Install Rust with Cargo for your system.
@@ -27,7 +31,3 @@ Your built binary is now in `target/release/imgur-enumerator`
 `imgur-enumerator -c 50 -e imgur-links.txt`
 
 Run `imgur-enumerator --help` to for more information.
-
-# Example
-
-![Example](example.gif)
