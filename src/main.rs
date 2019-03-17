@@ -146,7 +146,7 @@ fn main() {
                 .long("export")
                 .short("e")
                 .takes_value(true)
-                .help("File where found links will be written"),
+                .help("Path to file where found links will be written"),
         )
         .get_matches();
 
