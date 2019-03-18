@@ -28,4 +28,4 @@ Your built binary is now in `target/release/imgur-enumerator`
 
 `imgur-enumerator -c 50 -e imgur-links.txt`
 
-Run `imgur-enumerator --help` to for more information.
+Run `imgur-enumerator --help` for more information.
