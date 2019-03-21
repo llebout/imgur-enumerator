@@ -1,6 +1,6 @@
 # imgur-enumerator
 
-Enumerates valid image links from imgur and can forward them to a Discord webhook and/or a file.
+Enumerates valid image links from imgur and can forward them to a Discord webhook, a Telegram channel and/or a file.
 
 Thanks to Rust's asynchronous I/O with Tokio and the Hyper HTTP library,
 imgur-enumerator has very high performance.

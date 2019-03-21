@@ -51,6 +51,31 @@ impl Iterator for UriGenerator {
     }
 }
 
+fn stream_to_telegram(channel: String, token: String, rx: mpsc::Receiver<String>) {
+    let https = HttpsConnector::new(4).expect("TLS initialization failed");
+    let client = Client::builder().build::<_, hyper::Body>(https);
+
+    let mut runtime = tokio::runtime::Runtime::new().expect("Unable to create a runtime");
+
+    for image_url in rx {
+        let work = client
+            .get(
+                format!(
+                    "https://api.telegram.org/bot{}/sendPhoto?chat_id={}&photo={}",
+                    token, channel, image_url
+                )
+                .parse()
+                .unwrap(),
+            )
+            .and_then(|res| res.into_body().concat2())
+            .map(|_body| {})
+            .map_err(|_| {});
+
+        runtime.block_on(work).is_err();
+        
+    }
+}
+
 fn stream_to_webhook(id: u64, token: String, rx: mpsc::Receiver<String>) {
     use serenity::http;
     use serenity::model::channel::Embed;
@@ -142,6 +167,22 @@ fn main() {
                 .help("Discord Webhook Token"),
         )
         .arg(
+            Arg::with_name("tg_channel")
+                .long("tg-channel")
+                .short("k")
+                .takes_value(true)
+                .number_of_values(1)
+                .allow_hyphen_values(true)
+                .help("Telegram Channel ID"),
+        )
+        .arg(
+            Arg::with_name("tg_token")
+                .long("tg-token")
+                .short("l")
+                .takes_value(true)
+                .help("Telegram Bot Token"),
+        )
+        .arg(
             Arg::with_name("export_file")
                 .long("export")
                 .short("e")
@@ -154,6 +195,7 @@ fn main() {
 
     let (tx, rx) = mpsc::channel::<String>();
     let (tx_hook, rx_hook) = mpsc::channel::<String>();
+    let (tx_tg, rx_tg) = mpsc::channel::<String>();
 
     if matches.is_present("webhook_id") && matches.is_present("webhook_token") {
         let id = matches.value_of("webhook_id").unwrap().parse().unwrap();
@@ -166,6 +208,13 @@ fn main() {
         let export_path: String = matches.value_of("export_file").unwrap().to_string();
 
         thread::spawn(move || stream_to_file(export_path, rx));
+    }
+
+    if matches.is_present("tg_channel") && matches.is_present("tg_token") {
+        let channel = matches.value_of("tg_channel").unwrap().to_string();
+        let token: String = matches.value_of("tg_token").unwrap().to_string();
+
+        thread::spawn(move || stream_to_telegram(channel, token, rx_tg));
     }
 
     let request_per_second = Arc::new(AtomicUsize::new(0));
@@ -202,6 +251,7 @@ fn main() {
 
         let tx = tx.clone();
         let tx_hook = tx_hook.clone();
+        let tx_tg = tx_tg.clone();
 
         let https = HttpsConnector::new(4).expect("TLS initialization failed");
         let client = Client::builder().build::<_, hyper::Body>(https);
@@ -234,6 +284,7 @@ fn main() {
 
                     tx.send(image_url.clone()).is_err();
                     tx_hook.send(image_url.clone()).is_err();
+                    tx_tg.send(image_url.clone()).is_err();
                 }
                 res.into_body().concat2()
             })
