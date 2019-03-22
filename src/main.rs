@@ -45,8 +45,8 @@ impl Iterator for UriGenerator {
                     .collect::<String>(),
                 self.extension
             )
-            .parse()
-            .unwrap(),
+                .parse()
+                .unwrap(),
         )
     }
 }
@@ -64,15 +64,14 @@ fn stream_to_telegram(channel: String, token: String, rx: mpsc::Receiver<String>
                     "https://api.telegram.org/bot{}/sendPhoto?chat_id={}&photo={}",
                     token, channel, image_url
                 )
-                .parse()
-                .unwrap(),
+                    .parse()
+                    .unwrap(),
             )
             .and_then(|res| res.into_body().concat2())
             .map(|_body| {})
             .map_err(|_| {});
 
         runtime.block_on(work).is_err();
-        
     }
 }
 
@@ -189,9 +188,18 @@ fn main() {
                 .takes_value(true)
                 .help("Path to file where found links will be written"),
         )
+        .arg(
+            Arg::with_name("user_agent")
+                .long("user-agent")
+                .short("u")
+                .takes_value(true)
+                .default_value("Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:65.0) Gecko/20100101 Firefox/65.0")
+                .help("Value of User-Agent header which will be used in all requests")
+        )
         .get_matches();
 
     let n_concurrent = matches.value_of("concurrent").unwrap().parse().unwrap();
+    let user_agent = matches.value_of("user_agent").unwrap().to_string();
 
     let (tx, rx) = mpsc::channel::<String>();
     let (tx_hook, rx_hook) = mpsc::channel::<String>();
@@ -258,10 +266,16 @@ fn main() {
 
         let images = UriGenerator::new(BASE_URL.to_string(), ".png".to_string());
 
+        let user_agent = user_agent.clone();
+
         let work = stream::iter_ok(images)
             .map(move |uri| {
+                let mut request = Request::head(uri.clone());
+
+                request.header("User-Agent", user_agent.clone());
+
                 client
-                    .request(Request::head(uri.clone()).body(Body::empty()).unwrap())
+                    .request(request.body(Body::empty()).unwrap())
                     .map(move |res| (res, uri))
             })
             .buffer_unordered(n_concurrent)
