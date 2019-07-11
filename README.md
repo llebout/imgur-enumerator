@@ -17,12 +17,8 @@ Install Rust with Cargo for your system.
 You can use https://rustup.rs/ or install your system packages.
 
 ```
-git clone https://github.com/leo-lb/imgur-enumerator
-cd imgur-enumerator
-cargo build --release
+cargo install --git https://github.com/leo-lb/imgur-enumerator
 ```
-
-Your built binary is now in `target/release/imgur-enumerator`
 
 # Usage
 
