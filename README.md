@@ -28,11 +28,12 @@ Example: `imgur-enumerator -c 50 -e imgur-links.txt`
 imgur-enumerator 0.1
 
 USAGE:
-    imgur-enumerator [OPTIONS]
+    imgur-enumerator [FLAGS] [OPTIONS]
 
 FLAGS:
-    -h, --help       Prints help information
-    -V, --version    Prints version information
+    -h, --help           Prints help information
+    -s, --report-size    Report the image size when exporting to a file
+    -V, --version        Prints version information
 
 OPTIONS:
     -c, --concurrent <concurrent>    Maximum amount of concurrent requests at a time [default: 4]
