@@ -1,6 +1,6 @@
 use clap::{App, Arg};
 use futures::{stream, Future, Stream};
-use hyper::{Body, Client, Request, StatusCode, Uri};
+use hyper::{Body, Client, Request, StatusCode, Uri, header};
 use hyper_tls::HttpsConnector;
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
@@ -87,16 +87,25 @@ fn stream_to_webhook(id: u64, token: String, rx: mpsc::Receiver<String>) {
     }
 }
 
-fn stream_to_file(path: String, rx: mpsc::Receiver<String>) {
+fn stream_to_file(path: String, rx: mpsc::Receiver<String>, rx_size: Option<mpsc::Receiver<u64>>) {
     let mut file = OpenOptions::new()
         .append(true)
         .create(true)
         .open(path)
         .unwrap();
 
-    for image_url in rx {
-        file.write_all(format!("{}\n", image_url).as_bytes())
-            .unwrap();
+    if let Some(rx_size) = rx_size {
+        for image_url in rx {
+            if let Ok(size) = rx_size.try_recv() {
+                file.write_all(format!("{} {}\n", image_url, size).as_bytes())
+                    .unwrap();
+            }
+        }
+    } else {
+        for image_url in rx {
+            file.write_all(format!("{}\n", image_url).as_bytes())
+                .unwrap();
+        }
     }
 }
 
@@ -196,6 +205,13 @@ fn main() {
                 .default_value("Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:65.0) Gecko/20100101 Firefox/65.0")
                 .help("Value of User-Agent header which will be used in all requests")
         )
+        .arg(
+            Arg::with_name("report_size")
+                .long("report-size")
+                .short("s")
+                .takes_value(false)
+                .help("Report the image size when exporting to a file")
+        )
         .get_matches();
 
     let n_concurrent = matches.value_of("concurrent").unwrap().parse().unwrap();
@@ -204,6 +220,7 @@ fn main() {
     let (tx, rx) = mpsc::channel::<String>();
     let (tx_hook, rx_hook) = mpsc::channel::<String>();
     let (tx_tg, rx_tg) = mpsc::channel::<String>();
+    let (tx_size, rx_size) = mpsc::channel::<u64>();
 
     if matches.is_present("webhook_id") && matches.is_present("webhook_token") {
         let id = matches.value_of("webhook_id").unwrap().parse().unwrap();
@@ -215,7 +232,11 @@ fn main() {
     if matches.is_present("export_file") {
         let export_path: String = matches.value_of("export_file").unwrap().to_string();
 
-        thread::spawn(move || stream_to_file(export_path, rx));
+        if matches.is_present("report_size") {
+            thread::spawn(move || stream_to_file(export_path, rx, Some(rx_size)));
+        } else {
+            thread::spawn(move || stream_to_file(export_path, rx, None));
+        }
     }
 
     if matches.is_present("tg_channel") && matches.is_present("tg_token") {
@@ -260,6 +281,7 @@ fn main() {
         let tx = tx.clone();
         let tx_hook = tx_hook.clone();
         let tx_tg = tx_tg.clone();
+        let tx_size = tx_size.clone();
 
         let https = HttpsConnector::new(4).expect("TLS initialization failed");
         let client = Client::builder().build::<_, hyper::Body>(https);
@@ -296,6 +318,14 @@ fn main() {
 
                     println!("{}found valid image at {}", "\x1B[K", image_url);
 
+                    if let Some(size) = res.headers().get(header::CONTENT_LENGTH) {
+                        if let Ok(size) = size.to_str() {
+                            if let Ok(size) = size.parse::<u64>() {
+                                tx_size.send(size).is_err();
+                            }
+                        }
+                    }
+                    
                     tx.send(image_url.clone()).is_err();
                     tx_hook.send(image_url.clone()).is_err();
                     tx_tg.send(image_url.clone()).is_err();
