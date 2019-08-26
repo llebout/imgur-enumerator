@@ -10,7 +10,7 @@ jobs:
     steps:
     - uses: actions/checkout@v1
     - name: Install dependencies
-      run: apt update && apt install openssl-dev -y
+      run: sudo apt update && sudo apt install openssl-dev -y
     - name: Build
       run: cargo build --verbose
     - name: Run tests
