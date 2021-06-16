@@ -5,7 +5,7 @@ authors = ["lle-bout"]
 edition = "2018"
 
 [dependencies]
-rand = "0.7"
+rand = "0.8"
 hyper = "0.12"
 futures = "0.1"
 tokio = "0.1"
